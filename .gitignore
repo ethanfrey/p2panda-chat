@@ -1,3 +1,7 @@
+# Lock files - don't commit until we have a release, too big and too much churn
+pnpm-lock.yaml
+Cargo.lock
+
 # Logs
 logs
 *.log
