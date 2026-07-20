@@ -379,6 +379,62 @@ impl AuthGroup {
             .is_some_and(|access| access.level >= AccessLevel::Write)
     }
 
+    /// Which **person** is this device, as of `deps`?
+    ///
+    /// The chat data model identifies authors by person subgroup, not by device, so that a message
+    /// written on someone's laptop can be edited on their phone and a profile survives adding a new
+    /// device. This is the resolution from one to the other: find the subgroup of the top group that
+    /// holds `device`, over the membership snapshot at `deps`.
+    ///
+    /// Like [`AuthGroup::access_at`] it is point-in-time, so every peer evaluating the same update
+    /// attributes it to the same author whatever else it has since learned.
+    ///
+    /// Two edge cases, both resolved deterministically rather than by rejecting:
+    ///
+    /// * **In several subgroups.** Nothing forbids a device being a member of two people's
+    ///   subgroups. We pick the lowest id, so peers agree; a device in that position has no single
+    ///   honest answer anyway.
+    /// * **In none.** The list admin is a direct `Individual` member of the top group (subgroups
+    ///   cannot be managers — see the module docs), so it may have no subgroup at all. Such a device
+    ///   is its own author identity. Since a person subgroup id is derived through a domain-separated
+    ///   hash, it can never collide with a raw device key, so the two kinds of author id share a
+    ///   keyspace safely.
+    ///
+    /// `None` means the device had no access at all at `deps` — the same condition under which
+    /// [`AuthGroup::may_write_at`] is false, so callers that checked write access first will always
+    /// get an answer here.
+    pub fn identity_at(&self, device: VerifyingKey, deps: &[Hash]) -> Option<VerifyingKey> {
+        let top = self.top_group_id?;
+        if deps.is_empty() || self.access_at(device, deps).is_none() {
+            return None;
+        }
+
+        let dep_set: HashSet<Hash> = deps.iter().copied().collect();
+        let states = self.state().inner.state_at(&dep_set).ok()?;
+
+        // Direct subgroups of the top group that contain this device.
+        let mut holders: Vec<VerifyingKey> = states
+            .get(&top)?
+            .access_levels()
+            .into_iter()
+            .filter_map(|(member, _)| match member {
+                GroupMember::Group(subgroup) => Some(subgroup),
+                GroupMember::Individual(_) => None,
+            })
+            .filter(|subgroup| {
+                states.get(subgroup).is_some_and(|state| {
+                    state
+                        .access_levels()
+                        .into_iter()
+                        .any(|(member, _)| member == GroupMember::Individual(device))
+                })
+            })
+            .collect();
+
+        holders.sort_by_key(|id| id.to_hex());
+        Some(holders.first().copied().unwrap_or(device))
+    }
+
     /// Our current access to the list, resolved transitively against *current* membership. Used only
     /// for the courtesy checks below — the enforcement is `access_at`, above.
     pub fn my_access(&self) -> Option<Access<Conditions>> {
