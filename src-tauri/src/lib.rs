@@ -1,3 +1,8 @@
+mod data;
+
+// TODO: Revisit this choice. Maybe anyhow?
+pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
 fn greet(name: &str) -> String {
