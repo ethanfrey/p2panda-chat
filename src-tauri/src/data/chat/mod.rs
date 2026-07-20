@@ -149,6 +149,7 @@ use loro::{
     VersionVector,
 };
 use p2panda_core::{Hash, Topic, VerifyingKey};
+use serde::Serialize;
 
 use crate::Result;
 
@@ -170,16 +171,62 @@ pub struct ChatDoc {
     /// Our own identity, used to stamp `author` on what we write locally and to refuse local edits
     /// of other people's items before they are ever published.
     me: AuthorId,
+    /// What has changed since the last [`ChatDoc::drain_changes`], for the UI to react to.
+    changes: Arc<Mutex<BTreeSet<Touch>>>,
+    /// Keeps the change subscription alive; dropping it would silence the notifications.
+    _subscription: loro::Subscription,
 }
 
 impl ChatDoc {
     pub fn new(id: ServerId, me: AuthorId) -> Self {
+        let doc = LoroDoc::new();
+
+        // One subscription, fed by local commits and remote imports alike, so the UI hears about
+        // our own writes and everyone else's through exactly one path. It reuses `collect_touches`
+        // — the same function that decides what an incoming update is allowed to change — so
+        // "what did this update touch" is answered once and only once in this codebase.
+        let changes: Arc<Mutex<BTreeSet<Touch>>> = Arc::new(Mutex::new(BTreeSet::new()));
+        let sink = Arc::clone(&changes);
+        let subscription = doc.subscribe_root(Arc::new(move |event| {
+            let mut sink = sink.lock().expect("change set is never poisoned");
+            for container in &event.events {
+                collect_touches(container.path, &container.diff, &mut sink);
+            }
+        }));
+
         Self {
             id,
-            doc: LoroDoc::new(),
+            doc,
             shared: VersionVector::default(),
             me,
+            changes,
+            _subscription: subscription,
         }
+    }
+
+    /// Take everything that has changed since the last call, and clear the record.
+    ///
+    /// Coarse on purpose: it says *which items* changed, not how. The UI re-queries those items,
+    /// which keeps the event payload small and bounded, and means a dropped or coalesced event can
+    /// never leave the UI showing something the document does not say.
+    ///
+    /// Loro emits on commit, and a local edit is committed by [`ChatDoc::export`], so drain after
+    /// publishing rather than immediately after mutating.
+    pub fn drain_changes(&self) -> Vec<Change> {
+        let mut changes = self.changes.lock().expect("change set is never poisoned");
+        let drained: Vec<Change> = changes.iter().filter_map(Change::from_touch).collect();
+        changes.clear();
+        drained
+    }
+
+    /// Point our authorship at a different person.
+    ///
+    /// Needed because a device does not know which person it belongs to until it has synced the
+    /// group: a second device of an existing user writes as *that user*, whose subgroup id it can
+    /// only learn from [`crate::data::auth::AuthGroup::identity_at`]. Until then it writes as
+    /// itself. Changing this does not rewrite anything already authored.
+    pub fn set_me(&mut self, me: AuthorId) {
+        self.me = me;
     }
 
     pub fn id(&self) -> ServerId {
@@ -343,6 +390,47 @@ impl ChatDoc {
             return Err(format!("{what} belongs to someone else").into());
         }
         Ok(())
+    }
+}
+
+/// Which collection a change landed in. The wire form of a root container name, for the UI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Collection {
+    Profile,
+    Channel,
+    ChannelOrder,
+    Message,
+    Reaction,
+    Thread,
+}
+
+/// One thing that changed, for the UI to re-query.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Change {
+    pub collection: Collection,
+    /// The item's id, or `None` for a change to a collection as a whole (the channel order).
+    pub id: Option<String>,
+}
+
+impl Change {
+    /// `None` for a touch on a root we do not recognise. Such an update is refused by
+    /// [`ChatDoc::authorize`] long before it reaches the document, so there is nothing to report.
+    fn from_touch(touch: &Touch) -> Option<Self> {
+        let collection = match touch.root.as_str() {
+            profile::ROOT => Collection::Profile,
+            channel::ROOT => Collection::Channel,
+            channel::ORDER_ROOT => Collection::ChannelOrder,
+            message::ROOT => Collection::Message,
+            reaction::ROOT => Collection::Reaction,
+            thread::ROOT => Collection::Thread,
+            _ => return None,
+        };
+        Some(Self {
+            collection,
+            id: touch.item.clone(),
+        })
     }
 }
 

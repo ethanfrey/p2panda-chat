@@ -63,7 +63,7 @@
 //!   rejects you. Much worse.
 //!
 //! The keyring makes that second case *easy* to reach by accident, because the key outlives
-//! `rm -rf ~/.p2panda-examples`. [`Profile::check_key_without_log`] exists to shout about it.
+//! `rm -rf ~/.p2panda-chat`. [`Profile::check_key_without_log`] exists to shout about it.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -74,14 +74,14 @@ use p2panda_core::{SigningKey, Topic};
 
 use crate::Result;
 
-/// All state written by any of these examples lives under `~/.p2panda-examples/`.
-const ROOT_DIR: &str = ".p2panda-examples";
+/// All state written by this app lives under `~/.p2panda-chat/`.
+const ROOT_DIR: &str = ".p2panda-chat";
 
-/// ... and this crate's under `~/.p2panda-examples/todo-auth/<profile>/`.
-const CRATE_DIR: &str = "todo-auth";
+/// ... and this app's under `~/.p2panda-chat/<profile>/`.
+const CRATE_DIR: &str = "chat";
 
 /// What the OS credential store files our keys under. The profile name is the "username".
-const KEYRING_SERVICE: &str = "p2panda-examples.todo-auth";
+const KEYRING_SERVICE: &str = "p2panda-chat";
 
 const DATABASE_FILE: &str = "node.sqlite";
 const KEY_FILE: &str = "key.bin";
@@ -115,7 +115,7 @@ pub struct Profile {
 }
 
 impl Profile {
-    /// Open (creating if needed) `~/.p2panda-examples/todo-auth/<name>/`.
+    /// Open (creating if needed) `~/.p2panda-chat/chat/<name>/`.
     pub fn open(name: &str) -> Result<Self> {
         if name.is_empty()
             || !name
@@ -220,9 +220,9 @@ impl Profile {
     /// under a different genesis — see the module docs. The keyring makes this easy to hit by
     /// accident, since the key survives `rm -rf` of this directory.
     ///
-    /// The `list-id` check is what keeps `todo-auth setup` from tripping this: setup mints an
-    /// identity and nothing else, so a key with no database and no list is a profile that has never
-    /// joined anything, not a profile that lost its log.
+    /// The `list-id` check is what keeps a first run from tripping this: a fresh profile mints an
+    /// identity and nothing else, so a key with no database and no server is a profile that has
+    /// never joined anything, not a profile that lost its log.
     pub fn check_key_without_log(&self, origin: KeyOrigin, storage: KeyStorage) -> Option<String> {
         let joined_before = self.dir.join(LIST_ID_FILE).exists();
 
@@ -247,9 +247,10 @@ impl Profile {
 /// `keyring::Error` is not `Send + Sync`, so it cannot cross into our boxed error type as-is.
 ///
 /// Failures here are mostly environmental — a headless box with no Secret Service running, a locked
-/// keyring — so point at the escape hatch while we are at it.
+/// keyring — so point at the escape hatch while we are at it. See `KEY_FILE_ENV` in
+/// [`crate::backend`].
 fn keyring_error(err: keyring::Error) -> Box<dyn std::error::Error + Send + Sync> {
-    format!("OS keyring unavailable ({err}); re-run with --key-file to use a key file instead")
+    format!("OS keyring unavailable ({err}); set KeyStorage::File to use a key file instead")
         .into()
 }
 

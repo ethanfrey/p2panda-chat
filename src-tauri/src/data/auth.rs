@@ -97,9 +97,9 @@ type GroupState = GroupCrdtState<VerifyingKey, Hash, GroupOperation, Conditions>
 type MembersState = GroupMembersState<GroupMember<VerifyingKey>, Conditions>;
 
 // Domain-separated labels, so the three derivations of one key never collide.
-const TOP_LABEL: &[u8] = b"todo-auth:top-group:";
-const PERSON_LABEL: &[u8] = b"todo-auth:person-group:";
-const TOPIC_LABEL: &[u8] = b"todo-auth:list-topic:";
+const TOP_LABEL: &[u8] = b"p2panda-chat:top-group:";
+const PERSON_LABEL: &[u8] = b"p2panda-chat:person-group:";
+const TOPIC_LABEL: &[u8] = b"p2panda-chat:server-topic:";
 
 /// Derive a group's `VerifyingKey` from a seed key. Every 32-byte hash is a valid ed25519 signing
 /// seed, so this always yields a usable key; the corresponding secret is nobody's — a group id is an
